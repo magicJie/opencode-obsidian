@@ -197,14 +197,25 @@ export default class OpenCodePlugin extends Plugin {
     return this.processManager?.getState() ?? "stopped";
   }
 
+  // Get the last error message from the process manager
+  getLastError(): string | null {
+    return this.processManager?.getLastError() ?? null;
+  }
+
   // Get the server URL
   getServerUrl(): string {
     return this.processManager?.getUrl() ?? `http://127.0.0.1:${this.settings.port}`;
   }
 
-  // Subscribe to process state changes
-  onProcessStateChange(callback: (state: ProcessState) => void): void {
+  // Subscribe to process state changes, returns unsubscribe function
+  onProcessStateChange(callback: (state: ProcessState) => void): () => void {
     this.stateChangeCallbacks.push(callback);
+    return () => {
+      const index = this.stateChangeCallbacks.indexOf(callback);
+      if (index > -1) {
+        this.stateChangeCallbacks.splice(index, 1);
+      }
+    };
   }
 
   // Notify all subscribers of state change

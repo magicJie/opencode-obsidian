@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => OpenCodePlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_SETTINGS = {
@@ -59,6 +59,7 @@ var OpenCodeView = class extends import_obsidian2.ItemView {
     super(leaf);
     this.iframeEl = null;
     this.currentState = "stopped";
+    this.unsubscribeStateChange = null;
     this.plugin = plugin;
   }
   getViewType() {
@@ -73,7 +74,7 @@ var OpenCodeView = class extends import_obsidian2.ItemView {
   async onOpen() {
     this.contentEl.empty();
     this.contentEl.addClass("opencode-container");
-    this.plugin.onProcessStateChange((state) => {
+    this.unsubscribeStateChange = this.plugin.onProcessStateChange((state) => {
       this.currentState = state;
       this.updateView();
     });
@@ -84,6 +85,10 @@ var OpenCodeView = class extends import_obsidian2.ItemView {
     }
   }
   async onClose() {
+    if (this.unsubscribeStateChange) {
+      this.unsubscribeStateChange();
+      this.unsubscribeStateChange = null;
+    }
     if (this.iframeEl) {
       this.iframeEl.src = "about:blank";
       this.iframeEl = null;
@@ -190,18 +195,29 @@ var OpenCodeView = class extends import_obsidian2.ItemView {
     const iconEl = statusContainer.createDiv({ cls: "opencode-status-icon" });
     (0, import_obsidian2.setIcon)(iconEl, "alert-circle");
     statusContainer.createEl("h3", { text: "Failed to start OpenCode" });
-    statusContainer.createEl("p", {
-      text: "There was an error starting the OpenCode server. Please check that OpenCode is installed and try again.",
-      cls: "opencode-status-message"
+    const errorMessage = this.plugin.getLastError();
+    if (errorMessage) {
+      statusContainer.createEl("p", {
+        text: errorMessage,
+        cls: "opencode-status-message opencode-error-message"
+      });
+    } else {
+      statusContainer.createEl("p", {
+        text: "There was an error starting the OpenCode server.",
+        cls: "opencode-status-message"
+      });
+    }
+    const buttonContainer = statusContainer.createDiv({
+      cls: "opencode-button-group"
     });
-    const retryButton = statusContainer.createEl("button", {
+    const retryButton = buttonContainer.createEl("button", {
       text: "Retry",
       cls: "mod-cta"
     });
     retryButton.addEventListener("click", () => {
       this.plugin.startServer();
     });
-    const settingsButton = statusContainer.createEl("button", {
+    const settingsButton = buttonContainer.createEl("button", {
       text: "Open Settings"
     });
     settingsButton.addEventListener("click", () => {
@@ -394,11 +410,12 @@ var OpenCodeSettingTab = class extends import_obsidian3.PluginSettingTab {
 
 // src/ProcessManager.ts
 var import_child_process = require("child_process");
-var import_obsidian4 = require("obsidian");
 var ProcessManager = class {
   constructor(settings, workingDirectory, projectDirectory, onStateChange) {
     this.process = null;
     this.state = "stopped";
+    this.lastError = null;
+    this.earlyExitCode = null;
     this.startupTimeout = null;
     this.settings = settings;
     this.workingDirectory = workingDirectory;
@@ -414,6 +431,9 @@ var ProcessManager = class {
   getState() {
     return this.state;
   }
+  getLastError() {
+    return this.lastError;
+  }
   getUrl() {
     const baseUrl = `http://${this.settings.hostname}:${this.settings.port}`;
     const encodedPath = btoa(this.projectDirectory);
@@ -425,11 +445,12 @@ var ProcessManager = class {
       return true;
     }
     this.setState("starting");
+    this.lastError = null;
+    this.earlyExitCode = null;
     try {
       if (!this.projectDirectory) {
-        const error = "Project directory (vault) not configured";
-        console.error("[OpenCode Error]", error);
-        new import_obsidian4.Notice(`Failed to start OpenCode: ${error}`);
+        this.lastError = "Project directory (vault) not configured";
+        console.error("[OpenCode Error]", this.lastError);
         this.setState("error");
         return false;
       }
@@ -474,13 +495,20 @@ var ProcessManager = class {
       this.process.on("exit", (code, signal) => {
         console.log(`OpenCode process exited with code ${code}, signal ${signal}`);
         this.process = null;
+        if (this.state === "starting" && code !== null && code !== 0) {
+          this.earlyExitCode = code;
+        }
         if (this.state === "running") {
           this.setState("stopped");
         }
       });
       this.process.on("error", (err) => {
         console.error("Failed to start OpenCode process:", err);
-        new import_obsidian4.Notice(`Failed to start OpenCode: ${err.message}`);
+        if (err.code === "ENOENT") {
+          this.lastError = `OpenCode executable not found at '${this.settings.opencodePath}'`;
+        } else {
+          this.lastError = `Failed to start OpenCode: ${err.message}`;
+        }
         this.process = null;
         this.setState("error");
       });
@@ -489,13 +517,23 @@ var ProcessManager = class {
         this.setState("running");
         return true;
       } else {
+        if (this.state === "error") {
+          return false;
+        }
+        if (this.earlyExitCode !== null) {
+          this.lastError = `OpenCode process exited unexpectedly (exit code ${this.earlyExitCode})`;
+        } else if (!this.process) {
+          this.lastError = "OpenCode process exited before server became ready";
+        } else {
+          this.lastError = "OpenCode server failed to start within timeout";
+        }
         this.stop();
         this.setState("error");
-        new import_obsidian4.Notice("OpenCode server failed to start within timeout");
         return false;
       }
     } catch (error) {
       console.error("Error starting OpenCode:", error);
+      this.lastError = error instanceof Error ? error.message : String(error);
       this.setState("error");
       return false;
     }
@@ -506,17 +544,30 @@ var ProcessManager = class {
       this.startupTimeout = null;
     }
     if (this.process) {
+      const proc = this.process;
+      const pid = proc.pid;
+      console.log("[OpenCode] Stopping process with PID:", pid);
+      this.setState("stopped");
+      this.process = null;
       try {
-        this.process.kill("SIGTERM");
+        proc.kill("SIGTERM");
+        console.log("[OpenCode] Sent SIGTERM to process");
         setTimeout(() => {
-          if (this.process && !this.process.killed) {
-            this.process.kill("SIGKILL");
+          if (proc.exitCode === null && proc.signalCode === null) {
+            console.log("[OpenCode] Process still running after SIGTERM, sending SIGKILL");
+            try {
+              proc.kill("SIGKILL");
+            } catch (error) {
+              console.error("[OpenCode] Error sending SIGKILL:", error);
+            }
+          } else {
+            console.log("[OpenCode] Process exited with:", proc.exitCode, proc.signalCode);
           }
         }, 2e3);
       } catch (error) {
-        console.error("Error stopping OpenCode process:", error);
+        console.error("[OpenCode] Error stopping process:", error);
       }
-      this.process = null;
+      return;
     }
     this.setState("stopped");
   }
@@ -556,7 +607,7 @@ var ProcessManager = class {
 };
 
 // src/main.ts
-var OpenCodePlugin = class extends import_obsidian5.Plugin {
+var OpenCodePlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -680,12 +731,12 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
   // Start the OpenCode server
   async startServer() {
     if (!this.processManager) {
-      new import_obsidian5.Notice("OpenCode: Process manager not initialized");
+      new import_obsidian4.Notice("OpenCode: Process manager not initialized");
       return false;
     }
     const success = await this.processManager.start();
     if (success) {
-      new import_obsidian5.Notice("OpenCode server started");
+      new import_obsidian4.Notice("OpenCode server started");
     }
     return success;
   }
@@ -693,7 +744,7 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
   stopServer() {
     if (this.processManager) {
       this.processManager.stop();
-      new import_obsidian5.Notice("OpenCode server stopped");
+      new import_obsidian4.Notice("OpenCode server stopped");
     }
   }
   // Get the current process state
@@ -701,14 +752,25 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
     var _a, _b;
     return (_b = (_a = this.processManager) == null ? void 0 : _a.getState()) != null ? _b : "stopped";
   }
+  // Get the last error message from the process manager
+  getLastError() {
+    var _a, _b;
+    return (_b = (_a = this.processManager) == null ? void 0 : _a.getLastError()) != null ? _b : null;
+  }
   // Get the server URL
   getServerUrl() {
     var _a, _b;
     return (_b = (_a = this.processManager) == null ? void 0 : _a.getUrl()) != null ? _b : `http://127.0.0.1:${this.settings.port}`;
   }
-  // Subscribe to process state changes
+  // Subscribe to process state changes, returns unsubscribe function
   onProcessStateChange(callback) {
     this.stateChangeCallbacks.push(callback);
+    return () => {
+      const index = this.stateChangeCallbacks.indexOf(callback);
+      if (index > -1) {
+        this.stateChangeCallbacks.splice(index, 1);
+      }
+    };
   }
   // Notify all subscribers of state change
   notifyStateChange(state) {

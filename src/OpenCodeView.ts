@@ -8,6 +8,7 @@ export class OpenCodeView extends ItemView {
   plugin: OpenCodePlugin;
   private iframeEl: HTMLIFrameElement | null = null;
   private currentState: ProcessState = "stopped";
+  private unsubscribeStateChange: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: OpenCodePlugin) {
     super(leaf);
@@ -31,7 +32,7 @@ export class OpenCodeView extends ItemView {
     this.contentEl.addClass("opencode-container");
 
     // Subscribe to state changes
-    this.plugin.onProcessStateChange((state) => {
+    this.unsubscribeStateChange = this.plugin.onProcessStateChange((state) => {
       this.currentState = state;
       this.updateView();
     });
@@ -47,6 +48,12 @@ export class OpenCodeView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    // Unsubscribe from state changes to prevent memory leak
+    if (this.unsubscribeStateChange) {
+      this.unsubscribeStateChange();
+      this.unsubscribeStateChange = null;
+    }
+    
     // Clean up iframe
     if (this.iframeEl) {
       this.iframeEl.src = "about:blank";
@@ -184,12 +191,26 @@ export class OpenCodeView extends ItemView {
     setIcon(iconEl, "alert-circle");
 
     statusContainer.createEl("h3", { text: "Failed to start OpenCode" });
-    statusContainer.createEl("p", {
-      text: "There was an error starting the OpenCode server. Please check that OpenCode is installed and try again.",
-      cls: "opencode-status-message",
+    
+    // Display specific error message if available
+    const errorMessage = this.plugin.getLastError();
+    if (errorMessage) {
+      statusContainer.createEl("p", {
+        text: errorMessage,
+        cls: "opencode-status-message opencode-error-message",
+      });
+    } else {
+      statusContainer.createEl("p", {
+        text: "There was an error starting the OpenCode server.",
+        cls: "opencode-status-message",
+      });
+    }
+
+    const buttonContainer = statusContainer.createDiv({
+      cls: "opencode-button-group",
     });
 
-    const retryButton = statusContainer.createEl("button", {
+    const retryButton = buttonContainer.createEl("button", {
       text: "Retry",
       cls: "mod-cta",
     });
@@ -197,7 +218,7 @@ export class OpenCodeView extends ItemView {
       this.plugin.startServer();
     });
 
-    const settingsButton = statusContainer.createEl("button", {
+    const settingsButton = buttonContainer.createEl("button", {
       text: "Open Settings",
     });
     settingsButton.addEventListener("click", () => {

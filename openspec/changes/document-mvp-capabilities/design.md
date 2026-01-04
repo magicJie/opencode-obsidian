@@ -27,6 +27,7 @@ This plugin embeds the OpenCode AI assistant into Obsidian by spawning a local s
 **Decision:** Embed OpenCode's web UI via iframe rather than building native Obsidian UI.
 
 **Rationale:**
+- Can be up and running quickly
 - OpenCode already provides a full-featured web interface
 - Reduces maintenance burden - UI updates come from OpenCode automatically
 - Allows feature parity with standalone OpenCode web experience
