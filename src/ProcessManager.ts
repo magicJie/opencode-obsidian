@@ -12,7 +12,6 @@ export class ProcessManager {
   private workingDirectory: string;
   private projectDirectory: string;
   private onStateChange: (state: ProcessState) => void;
-  private startupTimeout: NodeJS.Timeout | null = null;
 
   constructor(
     settings: OpenCodeSettings,
@@ -44,7 +43,6 @@ export class ProcessManager {
 
   getUrl(): string {
     const baseUrl = `http://${this.settings.hostname}:${this.settings.port}`;
-    // Encode the project directory path as base64 for the URL
     const encodedPath = btoa(this.projectDirectory);
     return `${baseUrl}/${encodedPath}`;
   }
@@ -58,176 +56,134 @@ export class ProcessManager {
     this.lastError = null;
     this.earlyExitCode = null;
 
-    try {
-      // Validate vault/project directory is set
-      if (!this.projectDirectory) {
-        this.lastError = "Project directory (vault) not configured";
-        console.error("[OpenCode Error]", this.lastError);
-        this.setState("error");
-        return false;
-      }
+    if (!this.projectDirectory) {
+      return this.setError("Project directory (vault) not configured");
+    }
 
-      // Check if server is already running on this port
-      const alreadyRunning = await this.checkServerHealth();
-      if (alreadyRunning) {
-        console.log("OpenCode server already running on port", this.settings.port);
-        this.setState("running");
-        return true;
-      }
+    // Check if server is already running on this port
+    if (await this.checkServerHealth()) {
+      console.log("[OpenCode] Server already running on port", this.settings.port);
+      this.setState("running");
+      return true;
+    }
 
-      // Start the opencode serve process (headless server, no browser)
-      // OpenCode is initialized with the vault directory as the project
-      console.log("[OpenCode] Starting server:", {
-        opencodePath: this.settings.opencodePath,
-        port: this.settings.port,
-        hostname: this.settings.hostname,
+    console.log("[OpenCode] Starting server:", {
+      opencodePath: this.settings.opencodePath,
+      port: this.settings.port,
+      hostname: this.settings.hostname,
+      cwd: this.workingDirectory,
+      projectDirectory: this.projectDirectory,
+    });
+
+    this.process = spawn(
+      this.settings.opencodePath,
+      [
+        "serve",
+        "--port",
+        this.settings.port.toString(),
+        "--hostname",
+        this.settings.hostname,
+        "--cors",
+        "app://obsidian.md",
+      ],
+      {
         cwd: this.workingDirectory,
-        projectDirectory: this.projectDirectory,
-      });
-
-      this.process = spawn(
-        this.settings.opencodePath,
-        [
-          "serve",
-          "--port",
-          this.settings.port.toString(),
-          "--hostname",
-          this.settings.hostname,
-          "--cors",
-          "app://obsidian.md",
-        ],
-        {
-          cwd: this.workingDirectory,
-          env: { ...process.env },
-          stdio: ["ignore", "pipe", "pipe"],
-          detached: false,
-        }
-      );
-
-      console.log("[OpenCode] Process spawned with PID:", this.process.pid);
-
-      // Handle process output
-      this.process.stdout?.on("data", (data) => {
-        console.log("[OpenCode]", data.toString().trim());
-      });
-
-      this.process.stderr?.on("data", (data) => {
-        console.error("[OpenCode Error]", data.toString().trim());
-      });
-
-      // Handle process exit
-      this.process.on("exit", (code, signal) => {
-        console.log(`OpenCode process exited with code ${code}, signal ${signal}`);
-        this.process = null;
-        
-        // Track early exit during startup for better error messages
-        if (this.state === "starting" && code !== null && code !== 0) {
-          this.earlyExitCode = code;
-        }
-        
-        // Only set stopped if we're in running state (not during startup)
-        if (this.state === "running") {
-          this.setState("stopped");
-        }
-      });
-
-      this.process.on("error", (err: NodeJS.ErrnoException) => {
-        console.error("Failed to start OpenCode process:", err);
-        
-        // Provide user-friendly error messages for common errors
-        if (err.code === "ENOENT") {
-          this.lastError = `OpenCode executable not found at '${this.settings.opencodePath}'`;
-        } else {
-          this.lastError = `Failed to start OpenCode: ${err.message}`;
-        }
-        
-        this.process = null;
-        this.setState("error");
-      });
-
-      // Wait for server to be ready, detecting early process exit
-      const ready = await this.waitForServerOrExit(15000);
-      if (ready) {
-        this.setState("running");
-        return true;
-      } else {
-        // If already in error state (e.g., from spawn error event), don't overwrite
-        if (this.state === "error") {
-          return false;
-        }
-        
-        // Determine appropriate error message
-        if (this.earlyExitCode !== null) {
-          this.lastError = `OpenCode process exited unexpectedly (exit code ${this.earlyExitCode})`;
-        } else if (!this.process) {
-          this.lastError = "OpenCode process exited before server became ready";
-        } else {
-          this.lastError = "OpenCode server failed to start within timeout";
-        }
-        
-        this.stop();
-        this.setState("error");
-        return false;
+        env: { ...process.env },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: false,
       }
-    } catch (error) {
-      console.error("Error starting OpenCode:", error);
-      this.lastError = error instanceof Error ? error.message : String(error);
-      this.setState("error");
+    );
+
+    console.log("[OpenCode] Process spawned with PID:", this.process.pid);
+
+    this.process.stdout?.on("data", (data) => {
+      console.log("[OpenCode]", data.toString().trim());
+    });
+
+    this.process.stderr?.on("data", (data) => {
+      console.error("[OpenCode Error]", data.toString().trim());
+    });
+
+    this.process.on("exit", (code, signal) => {
+      console.log(`[OpenCode] Process exited with code ${code}, signal ${signal}`);
+      this.process = null;
+
+      if (this.state === "starting" && code !== null && code !== 0) {
+        this.earlyExitCode = code;
+      }
+
+      if (this.state === "running") {
+        this.setState("stopped");
+      }
+    });
+
+    this.process.on("error", (err: NodeJS.ErrnoException) => {
+      console.error("[OpenCode] Failed to start process:", err);
+      this.process = null;
+
+      if (err.code === "ENOENT") {
+        this.setError(`Executable not found at '${this.settings.opencodePath}'`);
+      } else {
+        this.setError(`Failed to start: ${err.message}`);
+      }
+    });
+
+    // Wait for server to be ready
+    const ready = await this.waitForServerOrExit(15000);
+    if (ready) {
+      this.setState("running");
+      return true;
+    }
+
+    // If already in error state from spawn error event, don't overwrite
+    if (this.state === "error") {
       return false;
     }
+
+    // Determine appropriate error message based on what happened
+    this.stop();
+    if (this.earlyExitCode !== null) {
+      return this.setError(`Process exited unexpectedly (exit code ${this.earlyExitCode})`);
+    }
+    if (!this.process) {
+      return this.setError("Process exited before server became ready");
+    }
+    return this.setError("Server failed to start within timeout");
   }
 
   stop(): void {
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-
-    if (this.process) {
-      const proc = this.process;
-      const pid = proc.pid;
-      
-      console.log("[OpenCode] Stopping process with PID:", pid);
-      
-      // Set state to stopped first to prevent exit handler from interfering
+    if (!this.process) {
       this.setState("stopped");
-      
-      // Now clear the process reference before killing
-      // This ensures the exit handler knows we initiated the stop
-      this.process = null;
-      
-      try {
-        // Try graceful shutdown first
-        proc.kill("SIGTERM");
-        console.log("[OpenCode] Sent SIGTERM to process");
-        
-        // Force kill after 2 seconds if still running
-        setTimeout(() => {
-          // Check if process has exited (exitCode or signalCode will be set)
-          if (proc.exitCode === null && proc.signalCode === null) {
-            console.log("[OpenCode] Process still running after SIGTERM, sending SIGKILL");
-            try {
-              proc.kill("SIGKILL");
-            } catch (error) {
-              console.error("[OpenCode] Error sending SIGKILL:", error);
-            }
-          } else {
-            console.log("[OpenCode] Process exited with:", proc.exitCode, proc.signalCode);
-          }
-        }, 2000);
-      } catch (error) {
-        console.error("[OpenCode] Error stopping process:", error);
-      }
-      
       return;
     }
 
+    const proc = this.process;
+    console.log("[OpenCode] Stopping process with PID:", proc.pid);
+
     this.setState("stopped");
+    this.process = null;
+
+    proc.kill("SIGTERM");
+
+    // Force kill after 2 seconds if still running
+    setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        console.log("[OpenCode] Process still running, sending SIGKILL");
+        proc.kill("SIGKILL");
+      }
+    }, 2000);
   }
 
   private setState(state: ProcessState): void {
     this.state = state;
     this.onStateChange(state);
+  }
+
+  private setError(message: string): false {
+    this.lastError = message;
+    console.error("[OpenCode Error]", message);
+    this.setState("error");
+    return false;
   }
 
   private async checkServerHealth(): Promise<boolean> {
@@ -247,12 +203,11 @@ export class ProcessManager {
     const pollInterval = 500;
 
     while (Date.now() - startTime < timeoutMs) {
-      // If process exited early, fail fast
       if (!this.process) {
-        console.log("OpenCode process exited before server became ready");
+        console.log("[OpenCode] Process exited before server became ready");
         return false;
       }
-      
+
       if (await this.checkServerHealth()) {
         return true;
       }

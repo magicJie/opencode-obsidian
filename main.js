@@ -416,7 +416,6 @@ var ProcessManager = class {
     this.state = "stopped";
     this.lastError = null;
     this.earlyExitCode = null;
-    this.startupTimeout = null;
     this.settings = settings;
     this.workingDirectory = workingDirectory;
     this.projectDirectory = projectDirectory;
@@ -447,133 +446,108 @@ var ProcessManager = class {
     this.setState("starting");
     this.lastError = null;
     this.earlyExitCode = null;
-    try {
-      if (!this.projectDirectory) {
-        this.lastError = "Project directory (vault) not configured";
-        console.error("[OpenCode Error]", this.lastError);
-        this.setState("error");
-        return false;
-      }
-      const alreadyRunning = await this.checkServerHealth();
-      if (alreadyRunning) {
-        console.log("OpenCode server already running on port", this.settings.port);
-        this.setState("running");
-        return true;
-      }
-      console.log("[OpenCode] Starting server:", {
-        opencodePath: this.settings.opencodePath,
-        port: this.settings.port,
-        hostname: this.settings.hostname,
+    if (!this.projectDirectory) {
+      return this.setError("Project directory (vault) not configured");
+    }
+    if (await this.checkServerHealth()) {
+      console.log("[OpenCode] Server already running on port", this.settings.port);
+      this.setState("running");
+      return true;
+    }
+    console.log("[OpenCode] Starting server:", {
+      opencodePath: this.settings.opencodePath,
+      port: this.settings.port,
+      hostname: this.settings.hostname,
+      cwd: this.workingDirectory,
+      projectDirectory: this.projectDirectory
+    });
+    this.process = (0, import_child_process.spawn)(
+      this.settings.opencodePath,
+      [
+        "serve",
+        "--port",
+        this.settings.port.toString(),
+        "--hostname",
+        this.settings.hostname,
+        "--cors",
+        "app://obsidian.md"
+      ],
+      {
         cwd: this.workingDirectory,
-        projectDirectory: this.projectDirectory
-      });
-      this.process = (0, import_child_process.spawn)(
-        this.settings.opencodePath,
-        [
-          "serve",
-          "--port",
-          this.settings.port.toString(),
-          "--hostname",
-          this.settings.hostname,
-          "--cors",
-          "app://obsidian.md"
-        ],
-        {
-          cwd: this.workingDirectory,
-          env: { ...process.env },
-          stdio: ["ignore", "pipe", "pipe"],
-          detached: false
-        }
-      );
-      console.log("[OpenCode] Process spawned with PID:", this.process.pid);
-      (_a = this.process.stdout) == null ? void 0 : _a.on("data", (data) => {
-        console.log("[OpenCode]", data.toString().trim());
-      });
-      (_b = this.process.stderr) == null ? void 0 : _b.on("data", (data) => {
-        console.error("[OpenCode Error]", data.toString().trim());
-      });
-      this.process.on("exit", (code, signal) => {
-        console.log(`OpenCode process exited with code ${code}, signal ${signal}`);
-        this.process = null;
-        if (this.state === "starting" && code !== null && code !== 0) {
-          this.earlyExitCode = code;
-        }
-        if (this.state === "running") {
-          this.setState("stopped");
-        }
-      });
-      this.process.on("error", (err) => {
-        console.error("Failed to start OpenCode process:", err);
-        if (err.code === "ENOENT") {
-          this.lastError = `OpenCode executable not found at '${this.settings.opencodePath}'`;
-        } else {
-          this.lastError = `Failed to start OpenCode: ${err.message}`;
-        }
-        this.process = null;
-        this.setState("error");
-      });
-      const ready = await this.waitForServerOrExit(15e3);
-      if (ready) {
-        this.setState("running");
-        return true;
-      } else {
-        if (this.state === "error") {
-          return false;
-        }
-        if (this.earlyExitCode !== null) {
-          this.lastError = `OpenCode process exited unexpectedly (exit code ${this.earlyExitCode})`;
-        } else if (!this.process) {
-          this.lastError = "OpenCode process exited before server became ready";
-        } else {
-          this.lastError = "OpenCode server failed to start within timeout";
-        }
-        this.stop();
-        this.setState("error");
-        return false;
+        env: { ...process.env },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: false
       }
-    } catch (error) {
-      console.error("Error starting OpenCode:", error);
-      this.lastError = error instanceof Error ? error.message : String(error);
-      this.setState("error");
+    );
+    console.log("[OpenCode] Process spawned with PID:", this.process.pid);
+    (_a = this.process.stdout) == null ? void 0 : _a.on("data", (data) => {
+      console.log("[OpenCode]", data.toString().trim());
+    });
+    (_b = this.process.stderr) == null ? void 0 : _b.on("data", (data) => {
+      console.error("[OpenCode Error]", data.toString().trim());
+    });
+    this.process.on("exit", (code, signal) => {
+      console.log(`[OpenCode] Process exited with code ${code}, signal ${signal}`);
+      this.process = null;
+      if (this.state === "starting" && code !== null && code !== 0) {
+        this.earlyExitCode = code;
+      }
+      if (this.state === "running") {
+        this.setState("stopped");
+      }
+    });
+    this.process.on("error", (err) => {
+      console.error("[OpenCode] Failed to start process:", err);
+      this.process = null;
+      if (err.code === "ENOENT") {
+        this.setError(`Executable not found at '${this.settings.opencodePath}'`);
+      } else {
+        this.setError(`Failed to start: ${err.message}`);
+      }
+    });
+    const ready = await this.waitForServerOrExit(15e3);
+    if (ready) {
+      this.setState("running");
+      return true;
+    }
+    if (this.state === "error") {
       return false;
     }
+    this.stop();
+    if (this.earlyExitCode !== null) {
+      return this.setError(`Process exited unexpectedly (exit code ${this.earlyExitCode})`);
+    }
+    if (!this.process) {
+      return this.setError("Process exited before server became ready");
+    }
+    return this.setError("Server failed to start within timeout");
   }
   stop() {
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.process) {
-      const proc = this.process;
-      const pid = proc.pid;
-      console.log("[OpenCode] Stopping process with PID:", pid);
+    if (!this.process) {
       this.setState("stopped");
-      this.process = null;
-      try {
-        proc.kill("SIGTERM");
-        console.log("[OpenCode] Sent SIGTERM to process");
-        setTimeout(() => {
-          if (proc.exitCode === null && proc.signalCode === null) {
-            console.log("[OpenCode] Process still running after SIGTERM, sending SIGKILL");
-            try {
-              proc.kill("SIGKILL");
-            } catch (error) {
-              console.error("[OpenCode] Error sending SIGKILL:", error);
-            }
-          } else {
-            console.log("[OpenCode] Process exited with:", proc.exitCode, proc.signalCode);
-          }
-        }, 2e3);
-      } catch (error) {
-        console.error("[OpenCode] Error stopping process:", error);
-      }
       return;
     }
+    const proc = this.process;
+    console.log("[OpenCode] Stopping process with PID:", proc.pid);
     this.setState("stopped");
+    this.process = null;
+    proc.kill("SIGTERM");
+    setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        console.log("[OpenCode] Process still running, sending SIGKILL");
+        proc.kill("SIGKILL");
+      }
+    }, 2e3);
   }
   setState(state) {
     this.state = state;
     this.onStateChange(state);
+  }
+  setError(message) {
+    this.lastError = message;
+    console.error("[OpenCode Error]", message);
+    this.setState("error");
+    return false;
   }
   async checkServerHealth() {
     try {
@@ -591,7 +565,7 @@ var ProcessManager = class {
     const pollInterval = 500;
     while (Date.now() - startTime < timeoutMs) {
       if (!this.process) {
-        console.log("OpenCode process exited before server became ready");
+        console.log("[OpenCode] Process exited before server became ready");
         return false;
       }
       if (await this.checkServerHealth()) {
