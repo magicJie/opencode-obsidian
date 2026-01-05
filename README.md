@@ -1,17 +1,30 @@
-# Obsidian OpenCode
+# OpenCode plugin for Obsidian
 
-Embed [OpenCode](https://opencode.ai) AI assistant directly in Obsidian's sidebar.
+
+Give your notes AI capability by embedding Opencode [OpenCode](https://opencode.ai) AI assistant directly in Obsidian:
+
+<img src="./assets/opencode_in_obsidian.png" alt="OpenCode embeded in Obsidian" />
+
+**Use cases:**
+- Summarize and distill long-form content
+- Draft, edit, and refine your writing
+- Query and explore your knowledge base
+- Generate outlines and structured notes
+
+_Note: plugin author is not afiliated with OpenCode or Obsidian - this is a 3rd party software._
 
 ## Requirements
 
 - Desktop only (uses Node.js child processes)
-- [OpenCode CLI](https://opencode.ai) installed and in your PATH
+- [OpenCode CLI](https://opencode.ai) installed 
+- [Bun](https://bun.sh) installed
 
 ## Installation
 
-1. Clone to `.obsidian/plugins/obsidian-opencode`
-2. `bun install && bun run build`
+1. Clone to `.obsidian/plugins/obsidian-opencode` subdirectory under your vault's root
+2. Run `bun install && bun run build`
 3. Enable in Obsidian Settings > Community plugins
+4. Add AGENTS.md to the workspace root, use it to explain the structure
 
 ## Usage
 
@@ -29,20 +42,5 @@ Embed [OpenCode](https://opencode.ai) AI assistant directly in Obsidian's sideba
 
 ## Settings
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Port | 14096 | Server port |
-| Hostname | 127.0.0.1 | Bind address |
-| OpenCode path | opencode | Path to executable |
-| Auto-start | off | Start server on Obsidian launch |
+<img src="./assets/plugin_settings.png" alt="Available plugin settings" />
 
-## Development
-
-```bash
-bun run dev    # Watch mode
-bun run build  # Production build
-```
-
-## License
-
-MIT
