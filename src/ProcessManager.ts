@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
+import { homedir } from "os";
 import { OpenCodeSettings } from "./types";
 
 export type ProcessState = "stopped" | "starting" | "running" | "error";
@@ -75,24 +76,23 @@ export class ProcessManager {
       projectDirectory: this.projectDirectory,
     });
 
-    this.process = spawn(
-      this.settings.opencodePath,
-      [
-        "serve",
-        "--port",
-        this.settings.port.toString(),
-        "--hostname",
-        this.settings.hostname,
-        "--cors",
-        "app://obsidian.md",
-      ],
-      {
-        cwd: this.workingDirectory,
-        env: { ...process.env },
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
-      }
-    );
+    const home = homedir();
+    const command = `${this.settings.opencodePath} serve --port ${this.settings.port} --hostname ${this.settings.hostname} --cors app://obsidian.md`;
+
+    // Use interactive login shell (-i -l) to load user's full environment
+    // -l alone won't work because .bashrc has "case $- in *i*) ;; *) return;; esac"
+    this.process = spawn("/bin/bash", ["-i", "-l", "-c", command], {
+      cwd: this.workingDirectory,
+      env: {
+        ...process.env,
+        HOME: home,
+        SHELL: "/bin/bash",
+        TERM: "xterm",
+        XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || `${home}/.config`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
+    });
 
     console.log("[OpenCode] Process spawned with PID:", this.process.pid);
 

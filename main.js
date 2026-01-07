@@ -410,6 +410,7 @@ var OpenCodeSettingTab = class extends import_obsidian3.PluginSettingTab {
 
 // src/ProcessManager.ts
 var import_child_process = require("child_process");
+var import_os2 = require("os");
 var ProcessManager = class {
   constructor(settings, workingDirectory, projectDirectory, onStateChange) {
     this.process = null;
@@ -461,24 +462,20 @@ var ProcessManager = class {
       cwd: this.workingDirectory,
       projectDirectory: this.projectDirectory
     });
-    this.process = (0, import_child_process.spawn)(
-      this.settings.opencodePath,
-      [
-        "serve",
-        "--port",
-        this.settings.port.toString(),
-        "--hostname",
-        this.settings.hostname,
-        "--cors",
-        "app://obsidian.md"
-      ],
-      {
-        cwd: this.workingDirectory,
-        env: { ...process.env },
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false
-      }
-    );
+    const home = (0, import_os2.homedir)();
+    const command = `${this.settings.opencodePath} serve --port ${this.settings.port} --hostname ${this.settings.hostname} --cors app://obsidian.md`;
+    this.process = (0, import_child_process.spawn)("/bin/bash", ["-i", "-l", "-c", command], {
+      cwd: this.workingDirectory,
+      env: {
+        ...process.env,
+        HOME: home,
+        SHELL: "/bin/bash",
+        TERM: "xterm",
+        XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || `${home}/.config`
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false
+    });
     console.log("[OpenCode] Process spawned with PID:", this.process.pid);
     (_a = this.process.stdout) == null ? void 0 : _a.on("data", (data) => {
       console.log("[OpenCode]", data.toString().trim());
