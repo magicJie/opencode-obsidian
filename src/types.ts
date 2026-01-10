@@ -1,3 +1,5 @@
+export type ViewLocation = "sidebar" | "main";
+
 export interface OpenCodeSettings {
   port: number;
   hostname: string;
@@ -5,6 +7,7 @@ export interface OpenCodeSettings {
   opencodePath: string;
   projectDirectory: string;
   startupTimeout: number;
+  defaultViewLocation: ViewLocation;
 }
 
 export const DEFAULT_SETTINGS: OpenCodeSettings = {
@@ -14,6 +17,7 @@ export const DEFAULT_SETTINGS: OpenCodeSettings = {
   opencodePath: "opencode",
   projectDirectory: "",
   startupTimeout: 15000,
+  defaultViewLocation: "sidebar",
 };
 
 export const OPENCODE_VIEW_TYPE = "opencode-view";

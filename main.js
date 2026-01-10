@@ -36,7 +36,8 @@ var DEFAULT_SETTINGS = {
   autoStart: false,
   opencodePath: "opencode",
   projectDirectory: "",
-  startupTimeout: 15e3
+  startupTimeout: 15e3,
+  defaultViewLocation: "sidebar"
 };
 var OPENCODE_VIEW_TYPE = "opencode-view";
 
@@ -297,6 +298,14 @@ var OpenCodeSettingTab = class extends import_obsidian3.PluginSettingTab {
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoStart).onChange(async (value) => {
         this.plugin.settings.autoStart = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("Default view location").setDesc(
+      "Where to open the OpenCode panel: sidebar opens in the right panel, main opens as a tab in the editor area"
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("sidebar", "Sidebar").addOption("main", "Main window").setValue(this.plugin.settings.defaultViewLocation).onChange(async (value) => {
+        this.plugin.settings.defaultViewLocation = value;
         await this.plugin.saveSettings();
       })
     );
@@ -666,7 +675,12 @@ var OpenCodePlugin = class extends import_obsidian4.Plugin {
       this.app.workspace.revealLeaf(existingLeaf);
       return;
     }
-    const leaf = this.app.workspace.getRightLeaf(false);
+    let leaf = null;
+    if (this.settings.defaultViewLocation === "main") {
+      leaf = this.app.workspace.getLeaf("tab");
+    } else {
+      leaf = this.app.workspace.getRightLeaf(false);
+    }
     if (leaf) {
       await leaf.setViewState({
         type: OPENCODE_VIEW_TYPE,
@@ -679,11 +693,16 @@ var OpenCodePlugin = class extends import_obsidian4.Plugin {
   async toggleView() {
     const existingLeaf = this.getExistingLeaf();
     if (existingLeaf) {
-      const rightSplit = this.app.workspace.rightSplit;
-      if (rightSplit && !rightSplit.collapsed) {
-        existingLeaf.detach();
+      const isInSidebar = existingLeaf.getRoot() === this.app.workspace.rightSplit;
+      if (isInSidebar) {
+        const rightSplit = this.app.workspace.rightSplit;
+        if (rightSplit && !rightSplit.collapsed) {
+          existingLeaf.detach();
+        } else {
+          this.app.workspace.revealLeaf(existingLeaf);
+        }
       } else {
-        this.app.workspace.revealLeaf(existingLeaf);
+        existingLeaf.detach();
       }
     } else {
       await this.activateView();

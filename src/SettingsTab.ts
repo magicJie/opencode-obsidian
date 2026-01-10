@@ -2,6 +2,7 @@ import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import { existsSync, statSync } from "fs";
 import { homedir } from "os";
 import type OpenCodePlugin from "./main";
+import type { ViewLocation } from "./types";
 
 function expandTilde(path: string): string {
   if (path === "~") {
@@ -104,6 +105,22 @@ export class OpenCodeSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.autoStart)
           .onChange(async (value) => {
             this.plugin.settings.autoStart = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Default view location")
+      .setDesc(
+        "Where to open the OpenCode panel: sidebar opens in the right panel, main opens as a tab in the editor area"
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("sidebar", "Sidebar")
+          .addOption("main", "Main window")
+          .setValue(this.plugin.settings.defaultViewLocation)
+          .onChange(async (value) => {
+            this.plugin.settings.defaultViewLocation = value as ViewLocation;
             await this.plugin.saveSettings();
           })
       );

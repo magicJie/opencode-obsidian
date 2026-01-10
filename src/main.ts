@@ -118,8 +118,14 @@ export default class OpenCodePlugin extends Plugin {
       return;
     }
 
-    // Create new leaf in right sidebar
-    const leaf = this.app.workspace.getRightLeaf(false);
+    // Create new leaf based on defaultViewLocation setting
+    let leaf: WorkspaceLeaf | null = null;
+    if (this.settings.defaultViewLocation === "main") {
+      leaf = this.app.workspace.getLeaf("tab");
+    } else {
+      leaf = this.app.workspace.getRightLeaf(false);
+    }
+
     if (leaf) {
       await leaf.setViewState({
         type: OPENCODE_VIEW_TYPE,
@@ -134,12 +140,20 @@ export default class OpenCodePlugin extends Plugin {
     const existingLeaf = this.getExistingLeaf();
 
     if (existingLeaf) {
-      // Check if visible
-      const rightSplit = this.app.workspace.rightSplit;
-      if (rightSplit && !rightSplit.collapsed) {
-        existingLeaf.detach();
+      // Check if the view is in the sidebar or main area
+      const isInSidebar = existingLeaf.getRoot() === this.app.workspace.rightSplit;
+
+      if (isInSidebar) {
+        // For sidebar views, check if sidebar is collapsed
+        const rightSplit = this.app.workspace.rightSplit;
+        if (rightSplit && !rightSplit.collapsed) {
+          existingLeaf.detach();
+        } else {
+          this.app.workspace.revealLeaf(existingLeaf);
+        }
       } else {
-        this.app.workspace.revealLeaf(existingLeaf);
+        // For main area views, just detach (close the tab)
+        existingLeaf.detach();
       }
     } else {
       await this.activateView();
