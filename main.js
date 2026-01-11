@@ -170,6 +170,7 @@ var OpenCodeView = class extends import_obsidian2.ItemView {
     const iframeContainer = this.contentEl.createDiv({
       cls: "opencode-iframe-container"
     });
+    console.log("[OpenCode] Loading iframe with URL:", this.plugin.getServerUrl());
     this.iframeEl = iframeContainer.createEl("iframe", {
       cls: "opencode-iframe",
       attr: {
@@ -414,13 +415,12 @@ var OpenCodeSettingTab = class extends import_obsidian3.PluginSettingTab {
 // src/ProcessManager.ts
 var import_child_process = require("child_process");
 var ProcessManager = class {
-  constructor(settings, workingDirectory, projectDirectory, onStateChange) {
+  constructor(settings, projectDirectory, onStateChange) {
     this.process = null;
     this.state = "stopped";
     this.lastError = null;
     this.earlyExitCode = null;
     this.settings = settings;
-    this.workingDirectory = workingDirectory;
     this.projectDirectory = projectDirectory;
     this.onStateChange = onStateChange;
   }
@@ -461,7 +461,7 @@ var ProcessManager = class {
       opencodePath: this.settings.opencodePath,
       port: this.settings.port,
       hostname: this.settings.hostname,
-      cwd: this.workingDirectory,
+      cwd: this.projectDirectory,
       projectDirectory: this.projectDirectory
     });
     this.process = (0, import_child_process.spawn)(
@@ -476,7 +476,7 @@ var ProcessManager = class {
         "app://obsidian.md"
       ],
       {
-        cwd: this.workingDirectory,
+        cwd: this.projectDirectory,
         env: { ...process.env },
         stdio: ["ignore", "pipe", "pipe"],
         detached: false
@@ -594,11 +594,9 @@ var OpenCodePlugin = class extends import_obsidian4.Plugin {
     console.log("Loading OpenCode plugin");
     registerOpenCodeIcons();
     await this.loadSettings();
-    const vaultPath = this.getVaultPath();
     const projectDirectory = this.getProjectDirectory();
     this.processManager = new ProcessManager(
       this.settings,
-      vaultPath,
       projectDirectory,
       (state) => this.notifyStateChange(state)
     );
@@ -728,8 +726,7 @@ var OpenCodePlugin = class extends import_obsidian4.Plugin {
     return (_a = this.processManager.getLastError()) != null ? _a : null;
   }
   getServerUrl() {
-    var _a;
-    return (_a = this.processManager.getUrl()) != null ? _a : `http://127.0.0.1:${this.settings.port}`;
+    return this.processManager.getUrl();
   }
   onProcessStateChange(callback) {
     this.stateChangeCallbacks.push(callback);
@@ -745,18 +742,17 @@ var OpenCodePlugin = class extends import_obsidian4.Plugin {
       callback(state);
     }
   }
-  getVaultPath() {
+  getProjectDirectory() {
+    if (this.settings.projectDirectory) {
+      console.log("[OpenCode] Using project directory from settings:", this.settings.projectDirectory);
+      return this.settings.projectDirectory;
+    }
     const adapter = this.app.vault.adapter;
     const vaultPath = adapter.basePath || "";
     if (!vaultPath) {
       console.warn("[OpenCode] Warning: Could not determine vault path");
     }
+    console.log("[OpenCode] Using vault path as project directory:", vaultPath);
     return vaultPath;
-  }
-  getProjectDirectory() {
-    if (this.settings.projectDirectory) {
-      return this.settings.projectDirectory;
-    }
-    return this.getVaultPath();
   }
 };

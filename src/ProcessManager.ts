@@ -9,18 +9,15 @@ export class ProcessManager {
   private lastError: string | null = null;
   private earlyExitCode: number | null = null;
   private settings: OpenCodeSettings;
-  private workingDirectory: string;
   private projectDirectory: string;
   private onStateChange: (state: ProcessState) => void;
 
   constructor(
     settings: OpenCodeSettings,
-    workingDirectory: string,
     projectDirectory: string,
     onStateChange: (state: ProcessState) => void
   ) {
     this.settings = settings;
-    this.workingDirectory = workingDirectory;
     this.projectDirectory = projectDirectory;
     this.onStateChange = onStateChange;
   }
@@ -71,7 +68,7 @@ export class ProcessManager {
       opencodePath: this.settings.opencodePath,
       port: this.settings.port,
       hostname: this.settings.hostname,
-      cwd: this.workingDirectory,
+      cwd: this.projectDirectory,
       projectDirectory: this.projectDirectory,
     });
 
@@ -87,7 +84,7 @@ export class ProcessManager {
         "app://obsidian.md",
       ],
       {
-        cwd: this.workingDirectory,
+        cwd: this.projectDirectory,
         env: { ...process.env },
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,

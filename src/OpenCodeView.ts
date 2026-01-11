@@ -152,6 +152,8 @@ export class OpenCodeView extends ItemView {
       cls: "opencode-iframe-container",
     });
 
+    console.log("[OpenCode] Loading iframe with URL:", this.plugin.getServerUrl());
+
     this.iframeEl = iframeContainer.createEl("iframe", {
       cls: "opencode-iframe",
       attr: {

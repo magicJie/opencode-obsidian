@@ -17,12 +17,10 @@ export default class OpenCodePlugin extends Plugin {
 
     await this.loadSettings();
 
-    const vaultPath = this.getVaultPath();
     const projectDirectory = this.getProjectDirectory();
 
     this.processManager = new ProcessManager(
       this.settings,
-      vaultPath,
       projectDirectory,
       (state) => this.notifyStateChange(state)
     );
@@ -182,7 +180,7 @@ export default class OpenCodePlugin extends Plugin {
   }
 
   getServerUrl(): string {
-    return this.processManager.getUrl() ?? `http://127.0.0.1:${this.settings.port}`;
+    return this.processManager.getUrl();
   }
 
   onProcessStateChange(callback: (state: ProcessState) => void): () => void {
@@ -201,19 +199,17 @@ export default class OpenCodePlugin extends Plugin {
     }
   }
 
-  private getVaultPath(): string {
+  getProjectDirectory(): string {
+    if (this.settings.projectDirectory) {
+      console.log("[OpenCode] Using project directory from settings:", this.settings.projectDirectory);
+      return this.settings.projectDirectory;
+    }
     const adapter = this.app.vault.adapter as any;
     const vaultPath = adapter.basePath || "";
     if (!vaultPath) {
       console.warn("[OpenCode] Warning: Could not determine vault path");
     }
+    console.log("[OpenCode] Using vault path as project directory:", vaultPath);
     return vaultPath;
-  }
-
-  getProjectDirectory(): string {
-    if (this.settings.projectDirectory) {
-      return this.settings.projectDirectory;
-    }
-    return this.getVaultPath();
   }
 }
