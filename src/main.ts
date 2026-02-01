@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Notice, EventRef } from "obsidian";
+import { Plugin, WorkspaceLeaf, Notice, EventRef, MarkdownView } from "obsidian";
 import { OpenCodeSettings, DEFAULT_SETTINGS, OPENCODE_VIEW_TYPE } from "./types";
 import { OpenCodeView } from "./OpenCodeView";
 import { OpenCodeSettingTab } from "./SettingsTab";
@@ -285,7 +285,10 @@ export default class OpenCodePlugin extends Plugin {
       return;
     }
 
-    const activeLeafRef = this.app.workspace.on("active-leaf-change", () => {
+    const activeLeafRef = this.app.workspace.on("active-leaf-change", (leaf) => {
+      if (leaf?.view instanceof MarkdownView) {
+        this.workspaceContext.trackViewSelection(leaf.view);
+      }
       this.scheduleContextRefresh(0);
     });
     const fileOpenRef = this.app.workspace.on("file-open", () => {
@@ -294,11 +297,33 @@ export default class OpenCodePlugin extends Plugin {
     const fileCloseRef = (this.app.workspace as any).on("file-close", () => {
       this.scheduleContextRefresh();
     });
-    const editorChangeRef = this.app.workspace.on("editor-change", () => {
+    const layoutChangeRef = this.app.workspace.on("layout-change", () => {
+      this.scheduleContextRefresh();
+    });
+    const editorChangeRef = this.app.workspace.on("editor-change", (_editor, view) => {
+      if (view instanceof MarkdownView) {
+        this.workspaceContext.trackViewSelection(view);
+      }
       this.scheduleContextRefresh(500);
     });
+    const selectionChangeRef = (this.app.workspace as any).on(
+      "editor-selection-change",
+      (_editor: unknown, view: unknown) => {
+        if (view instanceof MarkdownView) {
+          this.workspaceContext.trackViewSelection(view);
+        }
+        this.scheduleContextRefresh(200);
+      }
+    );
 
-    this.contextEventRefs = [activeLeafRef, fileOpenRef, fileCloseRef, editorChangeRef];
+    this.contextEventRefs = [
+      activeLeafRef,
+      fileOpenRef,
+      fileCloseRef,
+      layoutChangeRef,
+      editorChangeRef,
+      selectionChangeRef,
+    ];
     this.contextEventRefs.forEach((ref) => this.registerEvent(ref));
   }
 

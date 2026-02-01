@@ -20,6 +20,22 @@ export class WorkspaceContext {
     this.app = app;
   }
 
+  trackViewSelection(view: MarkdownView | null): void {
+    if (view) {
+      this.lastMarkdownView = view;
+    }
+
+    const sourcePath = view?.file?.path;
+    const selection = view?.editor?.getSelection() ?? "";
+
+    if (sourcePath && selection.trim()) {
+      this.lastSelection = {
+        text: selection,
+        sourcePath,
+      };
+    }
+  }
+
   gatherContext(maxNotes: number, maxSelectionLength: number): WorkspaceContextSnapshot {
     const leaves = this.app.workspace.getLeavesOfType("markdown");
     const paths = new Set<string>();
@@ -35,9 +51,7 @@ export class WorkspaceContext {
     const openNotePaths = Array.from(paths).slice(0, Math.max(0, maxNotes));
     const view = this.app.workspace.getActiveViewOfType(MarkdownView) ?? this.lastMarkdownView;
 
-    if (view) {
-      this.lastMarkdownView = view;
-    }
+    this.trackViewSelection(view);
 
     const sourcePath = view?.file?.path;
     const selection = view?.editor?.getSelection() ?? "";
@@ -49,10 +63,8 @@ export class WorkspaceContext {
         sourcePath,
       };
       this.lastSelection = selectionContext;
-    } else if (!sourcePath) {
+    } else if (this.lastSelection) {
       selectionContext = this.lastSelection;
-    } else {
-      this.lastSelection = null;
     }
 
     if (selectionContext && selectionContext.text.length > maxSelectionLength) {

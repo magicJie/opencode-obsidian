@@ -787,6 +787,20 @@ var WorkspaceContext = class {
     this.lastMarkdownView = null;
     this.app = app;
   }
+  trackViewSelection(view) {
+    var _a, _b, _c;
+    if (view) {
+      this.lastMarkdownView = view;
+    }
+    const sourcePath = (_a = view == null ? void 0 : view.file) == null ? void 0 : _a.path;
+    const selection = (_c = (_b = view == null ? void 0 : view.editor) == null ? void 0 : _b.getSelection()) != null ? _c : "";
+    if (sourcePath && selection.trim()) {
+      this.lastSelection = {
+        text: selection,
+        sourcePath
+      };
+    }
+  }
   gatherContext(maxNotes, maxSelectionLength) {
     var _a, _b, _c, _d, _e;
     const leaves = this.app.workspace.getLeavesOfType("markdown");
@@ -800,9 +814,7 @@ var WorkspaceContext = class {
     }
     const openNotePaths = Array.from(paths).slice(0, Math.max(0, maxNotes));
     const view = (_b = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView)) != null ? _b : this.lastMarkdownView;
-    if (view) {
-      this.lastMarkdownView = view;
-    }
+    this.trackViewSelection(view);
     const sourcePath = (_c = view == null ? void 0 : view.file) == null ? void 0 : _c.path;
     const selection = (_e = (_d = view == null ? void 0 : view.editor) == null ? void 0 : _d.getSelection()) != null ? _e : "";
     let selectionContext = null;
@@ -812,10 +824,8 @@ var WorkspaceContext = class {
         sourcePath
       };
       this.lastSelection = selectionContext;
-    } else if (!sourcePath) {
+    } else if (this.lastSelection) {
       selectionContext = this.lastSelection;
-    } else {
-      this.lastSelection = null;
     }
     if (selectionContext && selectionContext.text.length > maxSelectionLength) {
       selectionContext = {
@@ -1076,7 +1086,10 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
     if (this.contextEventRefs.length > 0) {
       return;
     }
-    const activeLeafRef = this.app.workspace.on("active-leaf-change", () => {
+    const activeLeafRef = this.app.workspace.on("active-leaf-change", (leaf) => {
+      if ((leaf == null ? void 0 : leaf.view) instanceof import_obsidian5.MarkdownView) {
+        this.workspaceContext.trackViewSelection(leaf.view);
+      }
       this.scheduleContextRefresh(0);
     });
     const fileOpenRef = this.app.workspace.on("file-open", () => {
@@ -1085,10 +1098,32 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
     const fileCloseRef = this.app.workspace.on("file-close", () => {
       this.scheduleContextRefresh();
     });
-    const editorChangeRef = this.app.workspace.on("editor-change", () => {
+    const layoutChangeRef = this.app.workspace.on("layout-change", () => {
+      this.scheduleContextRefresh();
+    });
+    const editorChangeRef = this.app.workspace.on("editor-change", (_editor, view) => {
+      if (view instanceof import_obsidian5.MarkdownView) {
+        this.workspaceContext.trackViewSelection(view);
+      }
       this.scheduleContextRefresh(500);
     });
-    this.contextEventRefs = [activeLeafRef, fileOpenRef, fileCloseRef, editorChangeRef];
+    const selectionChangeRef = this.app.workspace.on(
+      "editor-selection-change",
+      (_editor, view) => {
+        if (view instanceof import_obsidian5.MarkdownView) {
+          this.workspaceContext.trackViewSelection(view);
+        }
+        this.scheduleContextRefresh(200);
+      }
+    );
+    this.contextEventRefs = [
+      activeLeafRef,
+      fileOpenRef,
+      fileCloseRef,
+      layoutChangeRef,
+      editorChangeRef,
+      selectionChangeRef
+    ];
     this.contextEventRefs.forEach((ref) => this.registerEvent(ref));
   }
   clearContextListeners() {
