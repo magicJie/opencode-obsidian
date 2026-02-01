@@ -34,7 +34,6 @@ export class OpenCodeClient {
   private uiBaseUrl: string;
   private projectDirectory: string;
   private trackedSessionId: string | null = null;
-  private lastMessageId: string | null = null;
   private lastPart: OpenCodePart | null = null;
 
   constructor(apiBaseUrl: string, uiBaseUrl: string, projectDirectory: string) {
@@ -60,7 +59,6 @@ export class OpenCodeClient {
 
   resetTracking(): void {
     this.trackedSessionId = null;
-    this.lastMessageId = null;
     this.lastPart = null;
   }
 
@@ -107,7 +105,6 @@ export class OpenCodeClient {
 
     const message = await this.sendPrompt(sessionId, contextText);
     if (message?.info?.id) {
-      this.lastMessageId = message.info.id;
       this.lastPart = message.parts?.[0] ?? null;
     }
   }
@@ -159,7 +156,6 @@ export class OpenCodeClient {
       return false;
     }
 
-    this.lastMessageId = null;
     this.lastPart = null;
     return true;
   }

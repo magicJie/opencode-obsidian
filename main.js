@@ -632,7 +632,6 @@ var ProcessManager = class {
 var OpenCodeClient = class {
   constructor(apiBaseUrl, uiBaseUrl, projectDirectory) {
     this.trackedSessionId = null;
-    this.lastMessageId = null;
     this.lastPart = null;
     this.apiBaseUrl = this.normalizeBaseUrl(apiBaseUrl);
     this.uiBaseUrl = this.normalizeBaseUrl(uiBaseUrl);
@@ -650,7 +649,6 @@ var OpenCodeClient = class {
   }
   resetTracking() {
     this.trackedSessionId = null;
-    this.lastMessageId = null;
     this.lastPart = null;
   }
   getSessionUrl(sessionId) {
@@ -689,7 +687,6 @@ var OpenCodeClient = class {
     }
     const message = await this.sendPrompt(sessionId, contextText);
     if ((_a = message == null ? void 0 : message.info) == null ? void 0 : _a.id) {
-      this.lastMessageId = message.info.id;
       this.lastPart = (_c = (_b = message.parts) == null ? void 0 : _b[0]) != null ? _c : null;
     }
   }
@@ -734,7 +731,6 @@ var OpenCodeClient = class {
     if (!ignored) {
       return false;
     }
-    this.lastMessageId = null;
     this.lastPart = null;
     return true;
   }
@@ -791,83 +787,66 @@ var WorkspaceContext = class {
     this.lastMarkdownView = null;
     this.app = app;
   }
-  getOpenNotePaths(maxNotes) {
-    var _a;
+  gatherContext(maxNotes, maxSelectionLength) {
+    var _a, _b, _c, _d, _e;
     const leaves = this.app.workspace.getLeavesOfType("markdown");
     const paths = /* @__PURE__ */ new Set();
     for (const leaf of leaves) {
-      const view = leaf.view;
-      const path = (_a = view.file) == null ? void 0 : _a.path;
+      const view2 = leaf.view;
+      const path = (_a = view2.file) == null ? void 0 : _a.path;
       if (path) {
         paths.add(path);
       }
     }
-    return Array.from(paths).slice(0, Math.max(0, maxNotes));
-  }
-  updateSelectionFromView(view) {
-    var _a, _b, _c;
+    const openNotePaths = Array.from(paths).slice(0, Math.max(0, maxNotes));
+    const view = (_b = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView)) != null ? _b : this.lastMarkdownView;
     if (view) {
       this.lastMarkdownView = view;
     }
-    const sourcePath = (_a = view == null ? void 0 : view.file) == null ? void 0 : _a.path;
-    const selection = (_c = (_b = view == null ? void 0 : view.editor) == null ? void 0 : _b.getSelection()) != null ? _c : "";
-    if (!sourcePath || !selection.trim()) {
-      this.lastSelection = null;
-      return;
-    }
-    this.lastSelection = {
-      text: selection,
-      sourcePath
-    };
-  }
-  getSelectedText(maxSelectionLength) {
-    var _a, _b, _c, _d;
-    const view = (_a = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView)) != null ? _a : this.lastMarkdownView;
-    const sourcePath = (_b = view == null ? void 0 : view.file) == null ? void 0 : _b.path;
-    const selection = (_d = (_c = view == null ? void 0 : view.editor) == null ? void 0 : _c.getSelection()) != null ? _d : "";
-    let text = "";
-    let path = "";
+    const sourcePath = (_c = view == null ? void 0 : view.file) == null ? void 0 : _c.path;
+    const selection = (_e = (_d = view == null ? void 0 : view.editor) == null ? void 0 : _d.getSelection()) != null ? _e : "";
+    let selectionContext = null;
     if (sourcePath && selection.trim()) {
-      text = selection;
-      path = sourcePath;
-      this.lastSelection = { text, sourcePath: path };
-    } else if (this.lastSelection) {
-      text = this.lastSelection.text;
-      path = this.lastSelection.sourcePath;
+      selectionContext = {
+        text: selection,
+        sourcePath
+      };
+      this.lastSelection = selectionContext;
+    } else if (!sourcePath) {
+      selectionContext = this.lastSelection;
     } else {
-      return null;
+      this.lastSelection = null;
     }
-    const truncated = text.length > maxSelectionLength;
-    const trimmed = truncated ? text.slice(0, maxSelectionLength) : text;
+    if (selectionContext && selectionContext.text.length > maxSelectionLength) {
+      selectionContext = {
+        ...selectionContext,
+        text: selectionContext.text.slice(0, maxSelectionLength) + "... [truncated]"
+      };
+    }
+    let contextText = null;
+    if (openNotePaths.length > 0 || selectionContext) {
+      const lines = ["<obsidian-context>"];
+      if (openNotePaths.length > 0) {
+        lines.push("Currently open notes in Obsidian:");
+        for (const path of openNotePaths) {
+          lines.push(`- ${path}`);
+        }
+      }
+      if (selectionContext) {
+        lines.push("");
+        lines.push(`Selected text (from ${selectionContext.sourcePath}):`);
+        lines.push('"""');
+        lines.push(selectionContext.text);
+        lines.push('"""');
+      }
+      lines.push("</obsidian-context>");
+      contextText = lines.join("\n");
+    }
     return {
-      text: trimmed,
-      sourcePath: path,
-      truncated
+      openNotePaths,
+      selection: selectionContext,
+      contextText
     };
-  }
-  formatContext(openPaths, selection) {
-    if (openPaths.length === 0 && !selection) {
-      return null;
-    }
-    const lines = ["<system-reminder>"];
-    if (openPaths.length > 0) {
-      lines.push("Currently open notes in Obsidian:");
-      for (const path of openPaths) {
-        lines.push(`- ${path}`);
-      }
-    }
-    if (selection) {
-      lines.push("");
-      lines.push(`Selected text (from ${selection.sourcePath}):`);
-      lines.push('"""');
-      lines.push(selection.text);
-      if (selection.truncated) {
-        lines.push("[truncated]");
-      }
-      lines.push('"""');
-    }
-    lines.push("</system-reminder>");
-    return lines.join("\n");
   }
 };
 
@@ -879,9 +858,8 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
     this.stateChangeCallbacks = [];
     this.cachedIframeUrl = null;
     this.lastBaseUrl = null;
-    this.focusEventRef = null;
-    this.sidebarEventRefs = [];
-    this.sidebarRefreshTimer = null;
+    this.contextEventRefs = [];
+    this.contextRefreshTimer = null;
   }
   async onload() {
     console.log("Loading OpenCode plugin");
@@ -934,8 +912,7 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
         await this.startServer();
       });
     }
-    this.updateFocusListener();
-    this.updateSidebarListeners();
+    this.updateContextListeners();
     this.onProcessStateChange((state) => {
       if (state === "running") {
         void this.handleServerRunning();
@@ -954,8 +931,7 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
     await this.saveData(this.settings);
     this.processManager.updateSettings(this.settings);
     this.refreshClientState();
-    this.updateFocusListener();
-    this.updateSidebarListeners();
+    this.updateContextListeners();
   }
   // Update project directory and restart server if running
   async updateProjectDirectory(directory) {
@@ -1092,69 +1068,58 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
     }
     this.lastBaseUrl = nextUiBaseUrl;
   }
-  updateFocusListener() {
+  updateContextListeners() {
     if (!this.settings.injectWorkspaceContext) {
-      if (this.focusEventRef) {
-        this.app.workspace.offref(this.focusEventRef);
-        this.focusEventRef = null;
-      }
+      this.clearContextListeners();
       return;
     }
-    if (this.focusEventRef) {
+    if (this.contextEventRefs.length > 0) {
       return;
     }
-    const eventRef = this.app.workspace.on("active-leaf-change", (leaf) => {
-      if ((leaf == null ? void 0 : leaf.view) instanceof import_obsidian5.MarkdownView) {
-        this.workspaceContext.updateSelectionFromView(leaf.view);
-      }
-      if ((leaf == null ? void 0 : leaf.view.getViewType()) === OPENCODE_VIEW_TYPE) {
-        void this.updateOpenCodeContext(leaf);
-      }
+    const activeLeafRef = this.app.workspace.on("active-leaf-change", () => {
+      this.scheduleContextRefresh(0);
     });
-    this.focusEventRef = eventRef;
-    this.registerEvent(eventRef);
-  }
-  updateSidebarListeners() {
-    if (!this.settings.injectWorkspaceContext) {
-      this.clearSidebarListeners();
-      return;
-    }
-    if (this.sidebarEventRefs.length > 0) {
-      return;
-    }
     const fileOpenRef = this.app.workspace.on("file-open", () => {
-      this.scheduleSidebarContextRefresh();
+      this.scheduleContextRefresh();
     });
-    const editorChangeRef = this.app.workspace.on("editor-change", (_editor, view) => {
-      const markdownView = view instanceof import_obsidian5.MarkdownView ? view : this.app.workspace.getActiveViewOfType(import_obsidian5.MarkdownView);
-      this.workspaceContext.updateSelectionFromView(markdownView);
-      this.scheduleSidebarContextRefresh();
+    const fileCloseRef = this.app.workspace.on("file-close", () => {
+      this.scheduleContextRefresh();
     });
-    this.sidebarEventRefs = [fileOpenRef, editorChangeRef];
-    this.sidebarEventRefs.forEach((ref) => this.registerEvent(ref));
+    const editorChangeRef = this.app.workspace.on("editor-change", () => {
+      this.scheduleContextRefresh(500);
+    });
+    this.contextEventRefs = [activeLeafRef, fileOpenRef, fileCloseRef, editorChangeRef];
+    this.contextEventRefs.forEach((ref) => this.registerEvent(ref));
   }
-  clearSidebarListeners() {
-    for (const ref of this.sidebarEventRefs) {
+  clearContextListeners() {
+    for (const ref of this.contextEventRefs) {
       this.app.workspace.offref(ref);
     }
-    this.sidebarEventRefs = [];
-    if (this.sidebarRefreshTimer !== null) {
-      window.clearTimeout(this.sidebarRefreshTimer);
-      this.sidebarRefreshTimer = null;
+    this.contextEventRefs = [];
+    if (this.contextRefreshTimer !== null) {
+      window.clearTimeout(this.contextRefreshTimer);
+      this.contextRefreshTimer = null;
     }
   }
-  scheduleSidebarContextRefresh() {
-    const leaf = this.getVisibleSidebarOpenCodeLeaf();
+  scheduleContextRefresh(delayMs = 300) {
+    const leaf = this.getOpenCodeLeafForRefresh();
     if (!leaf) {
       return;
     }
-    if (this.sidebarRefreshTimer !== null) {
-      window.clearTimeout(this.sidebarRefreshTimer);
+    if (this.contextRefreshTimer !== null) {
+      window.clearTimeout(this.contextRefreshTimer);
     }
-    this.sidebarRefreshTimer = window.setTimeout(() => {
-      this.sidebarRefreshTimer = null;
+    this.contextRefreshTimer = window.setTimeout(() => {
+      this.contextRefreshTimer = null;
       void this.updateOpenCodeContext(leaf);
-    }, 1e3);
+    }, delayMs);
+  }
+  getOpenCodeLeafForRefresh() {
+    const activeLeaf = this.app.workspace.activeLeaf;
+    if ((activeLeaf == null ? void 0 : activeLeaf.view.getViewType()) === OPENCODE_VIEW_TYPE) {
+      return activeLeaf;
+    }
+    return this.getVisibleSidebarOpenCodeLeaf();
   }
   getVisibleSidebarOpenCodeLeaf() {
     const leaves = this.app.workspace.getLeavesOfType(OPENCODE_VIEW_TYPE);
@@ -1192,9 +1157,10 @@ var OpenCodePlugin = class extends import_obsidian5.Plugin {
       return;
     }
     this.cachedIframeUrl = iframeUrl;
-    const openPaths = this.workspaceContext.getOpenNotePaths(this.settings.maxNotesInContext);
-    const selection = this.workspaceContext.getSelectedText(this.settings.maxSelectionLength);
-    const contextText = this.workspaceContext.formatContext(openPaths, selection);
+    const { contextText } = this.workspaceContext.gatherContext(
+      this.settings.maxNotesInContext,
+      this.settings.maxSelectionLength
+    );
     await this.openCodeClient.updateContext({
       sessionId,
       contextText

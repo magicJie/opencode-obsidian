@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Notice, EventRef, MarkdownView } from "obsidian";
+import { Plugin, WorkspaceLeaf, Notice, EventRef } from "obsidian";
 import { OpenCodeSettings, DEFAULT_SETTINGS, OPENCODE_VIEW_TYPE } from "./types";
 import { OpenCodeView } from "./OpenCodeView";
 import { OpenCodeSettingTab } from "./SettingsTab";
@@ -15,9 +15,8 @@ export default class OpenCodePlugin extends Plugin {
   private workspaceContext: WorkspaceContext;
   private cachedIframeUrl: string | null = null;
   private lastBaseUrl: string | null = null;
-  private focusEventRef: EventRef | null = null;
-  private sidebarEventRefs: EventRef[] = [];
-  private sidebarRefreshTimer: number | null = null;
+  private contextEventRefs: EventRef[] = [];
+  private contextRefreshTimer: number | null = null;
 
   async onload(): Promise<void> {
     console.log("Loading OpenCode plugin");
@@ -83,8 +82,7 @@ export default class OpenCodePlugin extends Plugin {
       });
     }
 
-    this.updateFocusListener();
-    this.updateSidebarListeners();
+    this.updateContextListeners();
     this.onProcessStateChange((state) => {
       if (state === "running") {
         void this.handleServerRunning();
@@ -107,8 +105,7 @@ export default class OpenCodePlugin extends Plugin {
     await this.saveData(this.settings);
     this.processManager.updateSettings(this.settings);
     this.refreshClientState();
-    this.updateFocusListener();
-    this.updateSidebarListeners();
+    this.updateContextListeners();
   }
 
   // Update project directory and restart server if running
@@ -278,80 +275,67 @@ export default class OpenCodePlugin extends Plugin {
     this.lastBaseUrl = nextUiBaseUrl;
   }
 
-  private updateFocusListener(): void {
+  private updateContextListeners(): void {
     if (!this.settings.injectWorkspaceContext) {
-      if (this.focusEventRef) {
-        this.app.workspace.offref(this.focusEventRef);
-        this.focusEventRef = null;
-      }
+      this.clearContextListeners();
       return;
     }
 
-    if (this.focusEventRef) {
+    if (this.contextEventRefs.length > 0) {
       return;
     }
 
-    const eventRef = this.app.workspace.on("active-leaf-change", (leaf) => {
-      if (leaf?.view instanceof MarkdownView) {
-        this.workspaceContext.updateSelectionFromView(leaf.view);
-      }
-      if (leaf?.view.getViewType() === OPENCODE_VIEW_TYPE) {
-        void this.updateOpenCodeContext(leaf);
-      }
+    const activeLeafRef = this.app.workspace.on("active-leaf-change", () => {
+      this.scheduleContextRefresh(0);
     });
-
-    this.focusEventRef = eventRef;
-    this.registerEvent(eventRef);
-  }
-
-  private updateSidebarListeners(): void {
-    if (!this.settings.injectWorkspaceContext) {
-      this.clearSidebarListeners();
-      return;
-    }
-
-    if (this.sidebarEventRefs.length > 0) {
-      return;
-    }
-
     const fileOpenRef = this.app.workspace.on("file-open", () => {
-      this.scheduleSidebarContextRefresh();
+      this.scheduleContextRefresh();
     });
-    const editorChangeRef = this.app.workspace.on("editor-change", (_editor, view) => {
-      const markdownView = view instanceof MarkdownView ? view : this.app.workspace.getActiveViewOfType(MarkdownView);
-      this.workspaceContext.updateSelectionFromView(markdownView);
-      this.scheduleSidebarContextRefresh();
+    const fileCloseRef = (this.app.workspace as any).on("file-close", () => {
+      this.scheduleContextRefresh();
+    });
+    const editorChangeRef = this.app.workspace.on("editor-change", () => {
+      this.scheduleContextRefresh(500);
     });
 
-    this.sidebarEventRefs = [fileOpenRef, editorChangeRef];
-    this.sidebarEventRefs.forEach((ref) => this.registerEvent(ref));
+    this.contextEventRefs = [activeLeafRef, fileOpenRef, fileCloseRef, editorChangeRef];
+    this.contextEventRefs.forEach((ref) => this.registerEvent(ref));
   }
 
-  private clearSidebarListeners(): void {
-    for (const ref of this.sidebarEventRefs) {
+  private clearContextListeners(): void {
+    for (const ref of this.contextEventRefs) {
       this.app.workspace.offref(ref);
     }
-    this.sidebarEventRefs = [];
-    if (this.sidebarRefreshTimer !== null) {
-      window.clearTimeout(this.sidebarRefreshTimer);
-      this.sidebarRefreshTimer = null;
+    this.contextEventRefs = [];
+    if (this.contextRefreshTimer !== null) {
+      window.clearTimeout(this.contextRefreshTimer);
+      this.contextRefreshTimer = null;
     }
   }
 
-  private scheduleSidebarContextRefresh(): void {
-    const leaf = this.getVisibleSidebarOpenCodeLeaf();
+  private scheduleContextRefresh(delayMs: number = 300): void {
+    const leaf = this.getOpenCodeLeafForRefresh();
     if (!leaf) {
       return;
     }
 
-    if (this.sidebarRefreshTimer !== null) {
-      window.clearTimeout(this.sidebarRefreshTimer);
+    if (this.contextRefreshTimer !== null) {
+      window.clearTimeout(this.contextRefreshTimer);
     }
 
-    this.sidebarRefreshTimer = window.setTimeout(() => {
-      this.sidebarRefreshTimer = null;
+    this.contextRefreshTimer = window.setTimeout(() => {
+      this.contextRefreshTimer = null;
       void this.updateOpenCodeContext(leaf);
-    }, 1000);
+    }, delayMs);
+  }
+
+  private getOpenCodeLeafForRefresh(): WorkspaceLeaf | null {
+    const activeLeaf = this.app.workspace.activeLeaf;
+    if (activeLeaf?.view.getViewType() === OPENCODE_VIEW_TYPE) {
+      return activeLeaf;
+    }
+
+    return this.getVisibleSidebarOpenCodeLeaf();
   }
 
   private getVisibleSidebarOpenCodeLeaf(): WorkspaceLeaf | null {
@@ -398,9 +382,10 @@ export default class OpenCodePlugin extends Plugin {
 
     this.cachedIframeUrl = iframeUrl;
 
-    const openPaths = this.workspaceContext.getOpenNotePaths(this.settings.maxNotesInContext);
-    const selection = this.workspaceContext.getSelectedText(this.settings.maxSelectionLength);
-    const contextText = this.workspaceContext.formatContext(openPaths, selection);
+    const { contextText } = this.workspaceContext.gatherContext(
+      this.settings.maxNotesInContext,
+      this.settings.maxSelectionLength
+    );
 
     await this.openCodeClient.updateContext({
       sessionId,

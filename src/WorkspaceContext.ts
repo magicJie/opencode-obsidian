@@ -3,7 +3,12 @@ import { App, MarkdownView } from "obsidian";
 type SelectedTextContext = {
   text: string;
   sourcePath: string;
-  truncated: boolean;
+};
+
+type WorkspaceContextSnapshot = {
+  openNotePaths: string[];
+  selection: SelectedTextContext | null;
+  contextText: string | null;
 };
 
 export class WorkspaceContext {
@@ -15,7 +20,7 @@ export class WorkspaceContext {
     this.app = app;
   }
 
-  getOpenNotePaths(maxNotes: number): string[] {
+  gatherContext(maxNotes: number, maxSelectionLength: number): WorkspaceContextSnapshot {
     const leaves = this.app.workspace.getLeavesOfType("markdown");
     const paths = new Set<string>();
 
@@ -27,82 +32,63 @@ export class WorkspaceContext {
       }
     }
 
-    return Array.from(paths).slice(0, Math.max(0, maxNotes));
-  }
+    const openNotePaths = Array.from(paths).slice(0, Math.max(0, maxNotes));
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView) ?? this.lastMarkdownView;
 
-  updateSelectionFromView(view: MarkdownView | null): void {
     if (view) {
       this.lastMarkdownView = view;
     }
+
     const sourcePath = view?.file?.path;
     const selection = view?.editor?.getSelection() ?? "";
-
-    if (!sourcePath || !selection.trim()) {
-      this.lastSelection = null;
-      return;
-    }
-
-    this.lastSelection = {
-      text: selection,
-      sourcePath,
-    };
-  }
-
-  getSelectedText(maxSelectionLength: number): SelectedTextContext | null {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView) ?? this.lastMarkdownView;
-    const sourcePath = view?.file?.path;
-    const selection = view?.editor?.getSelection() ?? "";
-
-    let text = "";
-    let path = "";
+    let selectionContext: SelectedTextContext | null = null;
 
     if (sourcePath && selection.trim()) {
-      text = selection;
-      path = sourcePath;
-      this.lastSelection = { text, sourcePath: path };
-    } else if (this.lastSelection) {
-      text = this.lastSelection.text;
-      path = this.lastSelection.sourcePath;
+      selectionContext = {
+        text: selection,
+        sourcePath,
+      };
+      this.lastSelection = selectionContext;
+    } else if (!sourcePath) {
+      selectionContext = this.lastSelection;
     } else {
-      return null;
+      this.lastSelection = null;
     }
 
-    const truncated = text.length > maxSelectionLength;
-    const trimmed = truncated ? text.slice(0, maxSelectionLength) : text;
+    if (selectionContext && selectionContext.text.length > maxSelectionLength) {
+      selectionContext = {
+        ...selectionContext,
+        text: selectionContext.text.slice(0, maxSelectionLength) + "... [truncated]",
+      };
+    }
+
+    let contextText: string | null = null;
+    if (openNotePaths.length > 0 || selectionContext) {
+      const lines: string[] = ["<obsidian-context>"];
+
+      if (openNotePaths.length > 0) {
+        lines.push("Currently open notes in Obsidian:");
+        for (const path of openNotePaths) {
+          lines.push(`- ${path}`);
+        }
+      }
+
+      if (selectionContext) {
+        lines.push("");
+        lines.push(`Selected text (from ${selectionContext.sourcePath}):`);
+        lines.push('"""');
+        lines.push(selectionContext.text);
+        lines.push('"""');
+      }
+
+      lines.push("</obsidian-context>");
+      contextText = lines.join("\n");
+    }
 
     return {
-      text: trimmed,
-      sourcePath: path,
-      truncated,
+      openNotePaths,
+      selection: selectionContext,
+      contextText,
     };
-  }
-
-  formatContext(openPaths: string[], selection: SelectedTextContext | null): string | null {
-    if (openPaths.length === 0 && !selection) {
-      return null;
-    }
-
-    const lines: string[] = ["<system-reminder>"];
-
-    if (openPaths.length > 0) {
-      lines.push("Currently open notes in Obsidian:");
-      for (const path of openPaths) {
-        lines.push(`- ${path}`);
-      }
-    }
-
-    if (selection) {
-      lines.push("");
-      lines.push(`Selected text (from ${selection.sourcePath}):`);
-      lines.push('"""');
-      lines.push(selection.text);
-      if (selection.truncated) {
-        lines.push("[truncated]");
-      }
-      lines.push('"""');
-    }
-
-    lines.push("</system-reminder>");
-    return lines.join("\n");
   }
 }
