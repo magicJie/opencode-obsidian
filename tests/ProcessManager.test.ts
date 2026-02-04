@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterEach } from "bun:test";
-import { ProcessManager, ProcessState } from "../src/ProcessManager";
+import { ProcessManager, ProcessState, parseShellEnvOutput } from "../src/ProcessManager";
 import { OpenCodeSettings } from "../src/types";
 
 // Test configuration
@@ -309,7 +309,10 @@ describe("ProcessManager", () => {
 
       expect(success).toBe(false);
       expect(currentManager.getState()).toBe("error");
-      expect(currentManager.getLastError()).toContain("not found");
+      const lastError = currentManager.getLastError() ?? "";
+      const errorMatches =
+        lastError.includes("not found") || lastError.includes("exit code 127");
+      expect(errorMatches).toBe(true);
     });
 
     test("handles double stop gracefully", async () => {
@@ -332,6 +335,28 @@ describe("ProcessManager", () => {
       // Second stop should not throw
       await currentManager.stop();
       expect(currentManager.getState()).toBe("stopped");
+    });
+  });
+
+  describe("parseShellEnvOutput", () => {
+    test("parses null-delimited entries", () => {
+      const output = Buffer.from("A=1\0B=two=2\0C=\0\0");
+      const result = parseShellEnvOutput(output);
+
+      expect(result).toEqual({
+        A: "1",
+        B: "two=2",
+        C: "",
+      });
+    });
+
+    test("skips empty and invalid entries", () => {
+      const output = Buffer.from("=bad\0NOEQ\0OK=1\0");
+      const result = parseShellEnvOutput(output);
+
+      expect(result).toEqual({
+        OK: "1",
+      });
     });
   });
 });

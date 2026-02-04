@@ -1,7 +1,40 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn, ChildProcess, execFileSync } from "child_process";
 import { OpenCodeSettings } from "./types";
 
 export type ProcessState = "stopped" | "starting" | "running" | "error";
+
+export function parseShellEnvOutput(output: Buffer): Record<string, string> {
+  const env: Record<string, string> = {};
+  const vars = output.toString("utf8").split("\0");
+
+  for (const v of vars) {
+    if (!v) continue;
+    const eq = v.indexOf("=");
+    if (eq <= 0) continue;
+    const key = v.slice(0, eq);
+    const value = v.slice(eq + 1);
+    env[key] = value;
+  }
+
+  return env;
+}
+
+function getUserShellEnv(): Record<string, string> {
+  try {
+    const shellCandidate = (process.env.SHELL || "/bin/sh").trim();
+    const shell = shellCandidate.length > 0 ? shellCandidate : "/bin/sh";
+    const result = execFileSync(shell, ["-l", "-c", "env -0"], {
+      encoding: "buffer",
+      timeout: 5000,
+      maxBuffer: 2 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    return parseShellEnvOutput(result);
+  } catch {
+    return {};
+  }
+}
 
 export class ProcessManager {
   private process: ChildProcess | null = null;
@@ -70,26 +103,45 @@ export class ProcessManager {
       projectDirectory: this.projectDirectory,
     });
 
-    this.process = spawn(
-      this.settings.opencodePath,
-      [
-        "serve",
-        "--port",
-        this.settings.port.toString(),
-        "--hostname",
-        this.settings.hostname,
-        "--cors",
-        "app://obsidian.md",
-      ],
-      {
+    const isWindows = process.platform === "win32";
+
+    if (isWindows) {
+      // Windows: use shell mode for better compatibility
+      this.process = spawn(
+        this.settings.opencodePath,
+        [
+          "serve",
+          "--port",
+          this.settings.port.toString(),
+          "--hostname",
+          this.settings.hostname,
+          "--cors",
+          "app://obsidian.md",
+        ],
+        {
+          cwd: this.projectDirectory,
+          env: { ...process.env, NODE_USE_SYSTEM_CA: "1" },
+          stdio: ["ignore", "pipe", "pipe"],
+          shell: true,
+          windowsHide: true,
+          detached: false,
+        }
+      );
+    } else {
+      const userEnv = getUserShellEnv();
+      const command = `${this.settings.opencodePath} serve --port ${this.settings.port} --hostname ${this.settings.hostname} --cors app://obsidian.md`;
+
+      this.process = spawn("/bin/bash", ["-i", "-l", "-c", command], {
         cwd: this.projectDirectory,
-        env: { ...process.env, NODE_USE_SYSTEM_CA: "1" },
+        env: {
+          ...process.env,
+          ...userEnv,
+          NODE_USE_SYSTEM_CA: "1",
+        },
         stdio: ["ignore", "pipe", "pipe"],
-        shell: true,
-        windowsHide: true,
-        detached: (process.platform !== "win32"),
-      }
-    );
+        detached: true,
+      });
+    }
 
     console.log("[OpenCode] Process spawned with PID:", this.process.pid);
 
