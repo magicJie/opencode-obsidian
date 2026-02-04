@@ -87,6 +87,7 @@ export class ProcessManager {
         stdio: ["ignore", "pipe", "pipe"],
         shell: true,
         windowsHide: true,
+        detached: (process.platform !== "win32"),
       }
     );
 
